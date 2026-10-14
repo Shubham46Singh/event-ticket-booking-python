@@ -9,7 +9,7 @@ jobs:
       - checkout
       - run:
           name: Install lint tools
-          command: pip install ruff
+          command: pip install -r requirements-dev.txt
       - run:
           name: Check code style
           command: ruff check app tests
@@ -22,12 +22,13 @@ jobs:
       - run:
           name: Install dependencies
           command: |
-            pip install -r requirements.txt
-            pip install -r requirements-dev.txt
+            python -m pip install -r requirements.txt
+            python -m pip install -r requirements-dev.txt
       - run:
           name: Run unit tests with coverage
           command: |
-            pytest tests/test_seats.py \
+            export PYTHONPATH="$PWD"
+            python -m pytest tests/test_seats.py \
               --cov=app.seats \
               --cov-fail-under=70 \
               --cov-report=term-missing
@@ -51,8 +52,8 @@ jobs:
           command: |
             sudo apt-get update
             sudo apt-get install -y postgresql-client redis-tools
-            pip install -r requirements.txt
-            pip install -r requirements-dev.txt
+            python -m pip install -r requirements.txt
+            python -m pip install -r requirements-dev.txt
       - run:
           name: Wait for PostgreSQL and Redis
           command: |
@@ -71,13 +72,18 @@ jobs:
       - run:
           name: Apply database migrations and seed data
           command: |
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-              -f migrations/001_schema.sql
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-              -f migrations/002_seed.sql
+            export PGHOST=localhost
+            export PGPORT=5432
+            export PGUSER=assigner
+            export PGPASSWORD=assigner
+            export PGDATABASE=assigner
+            psql -v ON_ERROR_STOP=1 -f migrations/001_schema.sql
+            psql -v ON_ERROR_STOP=1 -f migrations/002_seed.sql
       - run:
           name: Run integration tests
-          command: pytest tests/test_integration.py -v
+          command: |
+            export PYTHONPATH="$PWD"
+            python -m pytest tests/test_integration.py -v
 
   secret-scan:
     docker:
@@ -106,8 +112,7 @@ jobs:
       - run:
           name: Build Docker image
           command: |
-            docker build \
-              -t event-ticket-booking:${CIRCLE_SHA1} .
+            docker build -t event-ticket-booking:${CIRCLE_SHA1} .
             docker image inspect event-ticket-booking:${CIRCLE_SHA1}
 
 workflows:
