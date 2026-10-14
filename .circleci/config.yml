@@ -1,0 +1,40 @@
+version: 2.1
+
+jobs:
+  lint:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install lint tools
+          command: pip install ruff
+      - run:
+          name: Check code style
+          command: ruff check app tests
+
+  unit-tests:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: |
+            pip install -r requirements.txt
+            pip install -r requirements-dev.txt
+      - run:
+          name: Run unit tests with coverage
+          command: |
+            pytest tests/test_seats.py \
+              --cov=app.seats \
+              --cov-fail-under=70 \
+              --cov-report=term-missing
+
+workflows:
+  event-ticket-booking:
+    jobs:
+      - lint
+      - unit-tests:
+          requires:
+            - lint
