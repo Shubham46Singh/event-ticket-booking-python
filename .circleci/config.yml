@@ -101,7 +101,7 @@ jobs:
             sudo install /tmp/gitleaks/gitleaks /usr/local/bin/gitleaks
       - run:
           name: Scan repository for secrets
-          command: gitleaks detect --source . --redact --exit-code 1
+          command: gitleaks dir . --redact --exit-code 1
 
   docker-build:
     docker:
