@@ -1,0 +1,246 @@
+﻿
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: event-booking-config
+  namespace: stage
+data:
+  DATABASE_URL: postgres://assigner:assigner@db:5432/assigner
+  REDIS_URL: redis://cache:6379
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: event-booking-db-secret
+  namespace: stage
+type: Opaque
+stringData:
+  POSTGRES_USER: assigner
+  POSTGRES_PASSWORD: assigner
+  POSTGRES_DB: assigner
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+  namespace: stage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: event-booking-db-secret
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: stage
+spec:
+  type: ClusterIP
+  selector:
+    app: db
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache
+  namespace: stage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cache
+  template:
+    metadata:
+      labels:
+        app: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache
+  namespace: stage
+spec:
+  type: ClusterIP
+  selector:
+    app: cache
+  ports:
+    - port: 6379
+      targetPort: 6379
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrations
+  namespace: stage
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: db-migrations
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrations
+          image: postgres:16-alpine
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: event-booking-db-secret
+                  key: POSTGRES_PASSWORD
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until pg_isready -h db -U assigner -d assigner; do
+                echo "Waiting for PostgreSQL"
+                sleep 3
+              done
+
+              for f in /migrations/*.sql; do
+                echo "Applying $f"
+                psql -h db -U assigner -d assigner \
+                  -v ON_ERROR_STOP=1 -f "$f" || exit 1
+              done
+
+              echo "Migrations completed"
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: event-booking-migrations
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: stage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      imagePullSecrets:
+        - name: dockerhub
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until pg_isready -h db -U assigner -d assigner; do
+                echo "Waiting for PostgreSQL"
+                sleep 3
+              done
+
+        - name: wait-for-redis
+          image: redis:7-alpine
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until redis-cli -h cache ping | grep -q PONG; do
+                echo "Waiting for Redis"
+                sleep 3
+              done
+
+      containers:
+        - name: web
+          image: anishh137/event-ticket-booking-python:stage
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: event-booking-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: stage
+spec:
+  type: ClusterIP
+  selector:
+    app: web
+  ports:
+    - port: 8080
+      targetPort: 8080
+
+
