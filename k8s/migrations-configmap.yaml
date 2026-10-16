@@ -1,0 +1,122 @@
+﻿apiVersion: v1
+data:
+  001_schema.sql: "CREATE TABLE IF NOT EXISTS events (\r\n    id            SERIAL
+    PRIMARY KEY,\r\n    name          TEXT NOT NULL,\r\n    venue         TEXT NOT
+    NULL DEFAULT '',\r\n    starts_at     TIMESTAMPTZ NOT NULL,\r\n    base_price
+    \   NUMERIC(8,2) NOT NULL CHECK (base_price >= 0),\r\n    row_count     INT NOT
+    NULL DEFAULT 10 CHECK (row_count BETWEEN 1 AND 16),\r\n    seats_per_row INT NOT
+    NULL DEFAULT 24 CHECK (seats_per_row BETWEEN 1 AND 24)\r\n);\r\n\r\nCREATE TABLE
+    IF NOT EXISTS bookings (\r\n    id         SERIAL PRIMARY KEY,\r\n    event_id
+    \  INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,\r\n    seat       TEXT
+    NOT NULL,\r\n    holder     TEXT NOT NULL,\r\n    price      NUMERIC(8,2) NOT
+    NULL CHECK (price >= 0),\r\n    ref        TEXT NOT NULL,\r\n    created_at TIMESTAMPTZ
+    NOT NULL DEFAULT now()\r\n);\r\n-- The guarantee of last resort. Redis holds can
+    expire; this cannot.\r\nCREATE UNIQUE INDEX IF NOT EXISTS bookings_one_per_seat\r\n
+    \   ON bookings (event_id, seat);\r\nCREATE INDEX IF NOT EXISTS bookings_ref ON
+    bookings (ref);\r\n"
+  002_seed.sql: "INSERT INTO events (id, name, venue, starts_at, base_price, row_count,
+    seats_per_row) VALUES\r\n (1,'Rahman Live in Concert','Chowdiah Memorial Hall',
+    now() + interval '21 days', 800.00, 10, 24),\r\n (2,'Campus Stand-Up Night','Student
+    Union Auditorium', now() + interval '5 days', 250.00, 6, 24),\r\n (3,'Jazz Quartet:
+    Late Set','Blue Door Club', now() + interval '2 days', 450.00, 4, 12),\r\n (4,'Graduation
+    Ceremony 2026','Main Quadrangle', now() + interval '60 days', 0.00, 16, 24)\r\nON
+    CONFLICT DO NOTHING;\r\nSELECT setval('events_id_seq', (SELECT max(id) FROM events));\r\n\r\n--
+    Event 3 is nearly sold out: row A is gone except A1, and row B has a\r\n-- scattering
+    of singles left. Asking for three together there is interesting.\r\nINSERT INTO
+    bookings (event_id, seat, holder, price, ref)\r\nSELECT 3, 'A' || n, 'earlybird',
+    787.50, 'SEEDA00001'\r\nFROM generate_series(2, 12) AS n\r\nON CONFLICT DO NOTHING;\r\n\r\nINSERT
+    INTO bookings (event_id, seat, holder, price, ref) VALUES\r\n (3,'B2','meena',787.50,'SEEDB00002'),\r\n
+    (3,'B5','meena',787.50,'SEEDB00002'),\r\n (3,'B9','arjun',787.50,'SEEDB00003'),\r\n
+    (3,'C4','arjun',562.50,'SEEDB00003')\r\nON CONFLICT DO NOTHING;\r\n\r\n-- A handful
+    of sales on the big show so the seat map is not a blank grid.\r\nINSERT INTO bookings
+    (event_id, seat, holder, price, ref) VALUES\r\n (1,'A1','nandini',1400.00,'SEED100001'),\r\n
+    (1,'A2','nandini',1400.00,'SEED100001'),\r\n (1,'D12','sunil',1000.00,'SEED100002'),\r\n
+    (1,'D13','sunil',1000.00,'SEED100002'),\r\n (1,'J7','kiran',800.00,'SEED100003')\r\nON
+    CONFLICT DO NOTHING;\r\nSELECT setval('bookings_id_seq', (SELECT max(id) FROM
+    bookings));\r\n"
+kind: ConfigMap
+metadata:
+  name: event-booking-migrations
+  namespace: qa
+---
+apiVersion: v1
+data:
+  001_schema.sql: "CREATE TABLE IF NOT EXISTS events (\r\n    id            SERIAL
+    PRIMARY KEY,\r\n    name          TEXT NOT NULL,\r\n    venue         TEXT NOT
+    NULL DEFAULT '',\r\n    starts_at     TIMESTAMPTZ NOT NULL,\r\n    base_price
+    \   NUMERIC(8,2) NOT NULL CHECK (base_price >= 0),\r\n    row_count     INT NOT
+    NULL DEFAULT 10 CHECK (row_count BETWEEN 1 AND 16),\r\n    seats_per_row INT NOT
+    NULL DEFAULT 24 CHECK (seats_per_row BETWEEN 1 AND 24)\r\n);\r\n\r\nCREATE TABLE
+    IF NOT EXISTS bookings (\r\n    id         SERIAL PRIMARY KEY,\r\n    event_id
+    \  INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,\r\n    seat       TEXT
+    NOT NULL,\r\n    holder     TEXT NOT NULL,\r\n    price      NUMERIC(8,2) NOT
+    NULL CHECK (price >= 0),\r\n    ref        TEXT NOT NULL,\r\n    created_at TIMESTAMPTZ
+    NOT NULL DEFAULT now()\r\n);\r\n-- The guarantee of last resort. Redis holds can
+    expire; this cannot.\r\nCREATE UNIQUE INDEX IF NOT EXISTS bookings_one_per_seat\r\n
+    \   ON bookings (event_id, seat);\r\nCREATE INDEX IF NOT EXISTS bookings_ref ON
+    bookings (ref);\r\n"
+  002_seed.sql: "INSERT INTO events (id, name, venue, starts_at, base_price, row_count,
+    seats_per_row) VALUES\r\n (1,'Rahman Live in Concert','Chowdiah Memorial Hall',
+    now() + interval '21 days', 800.00, 10, 24),\r\n (2,'Campus Stand-Up Night','Student
+    Union Auditorium', now() + interval '5 days', 250.00, 6, 24),\r\n (3,'Jazz Quartet:
+    Late Set','Blue Door Club', now() + interval '2 days', 450.00, 4, 12),\r\n (4,'Graduation
+    Ceremony 2026','Main Quadrangle', now() + interval '60 days', 0.00, 16, 24)\r\nON
+    CONFLICT DO NOTHING;\r\nSELECT setval('events_id_seq', (SELECT max(id) FROM events));\r\n\r\n--
+    Event 3 is nearly sold out: row A is gone except A1, and row B has a\r\n-- scattering
+    of singles left. Asking for three together there is interesting.\r\nINSERT INTO
+    bookings (event_id, seat, holder, price, ref)\r\nSELECT 3, 'A' || n, 'earlybird',
+    787.50, 'SEEDA00001'\r\nFROM generate_series(2, 12) AS n\r\nON CONFLICT DO NOTHING;\r\n\r\nINSERT
+    INTO bookings (event_id, seat, holder, price, ref) VALUES\r\n (3,'B2','meena',787.50,'SEEDB00002'),\r\n
+    (3,'B5','meena',787.50,'SEEDB00002'),\r\n (3,'B9','arjun',787.50,'SEEDB00003'),\r\n
+    (3,'C4','arjun',562.50,'SEEDB00003')\r\nON CONFLICT DO NOTHING;\r\n\r\n-- A handful
+    of sales on the big show so the seat map is not a blank grid.\r\nINSERT INTO bookings
+    (event_id, seat, holder, price, ref) VALUES\r\n (1,'A1','nandini',1400.00,'SEED100001'),\r\n
+    (1,'A2','nandini',1400.00,'SEED100001'),\r\n (1,'D12','sunil',1000.00,'SEED100002'),\r\n
+    (1,'D13','sunil',1000.00,'SEED100002'),\r\n (1,'J7','kiran',800.00,'SEED100003')\r\nON
+    CONFLICT DO NOTHING;\r\nSELECT setval('bookings_id_seq', (SELECT max(id) FROM
+    bookings));\r\n"
+kind: ConfigMap
+metadata:
+  name: event-booking-migrations
+  namespace: stage
+---
+apiVersion: v1
+data:
+  001_schema.sql: "CREATE TABLE IF NOT EXISTS events (\r\n    id            SERIAL
+    PRIMARY KEY,\r\n    name          TEXT NOT NULL,\r\n    venue         TEXT NOT
+    NULL DEFAULT '',\r\n    starts_at     TIMESTAMPTZ NOT NULL,\r\n    base_price
+    \   NUMERIC(8,2) NOT NULL CHECK (base_price >= 0),\r\n    row_count     INT NOT
+    NULL DEFAULT 10 CHECK (row_count BETWEEN 1 AND 16),\r\n    seats_per_row INT NOT
+    NULL DEFAULT 24 CHECK (seats_per_row BETWEEN 1 AND 24)\r\n);\r\n\r\nCREATE TABLE
+    IF NOT EXISTS bookings (\r\n    id         SERIAL PRIMARY KEY,\r\n    event_id
+    \  INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,\r\n    seat       TEXT
+    NOT NULL,\r\n    holder     TEXT NOT NULL,\r\n    price      NUMERIC(8,2) NOT
+    NULL CHECK (price >= 0),\r\n    ref        TEXT NOT NULL,\r\n    created_at TIMESTAMPTZ
+    NOT NULL DEFAULT now()\r\n);\r\n-- The guarantee of last resort. Redis holds can
+    expire; this cannot.\r\nCREATE UNIQUE INDEX IF NOT EXISTS bookings_one_per_seat\r\n
+    \   ON bookings (event_id, seat);\r\nCREATE INDEX IF NOT EXISTS bookings_ref ON
+    bookings (ref);\r\n"
+  002_seed.sql: "INSERT INTO events (id, name, venue, starts_at, base_price, row_count,
+    seats_per_row) VALUES\r\n (1,'Rahman Live in Concert','Chowdiah Memorial Hall',
+    now() + interval '21 days', 800.00, 10, 24),\r\n (2,'Campus Stand-Up Night','Student
+    Union Auditorium', now() + interval '5 days', 250.00, 6, 24),\r\n (3,'Jazz Quartet:
+    Late Set','Blue Door Club', now() + interval '2 days', 450.00, 4, 12),\r\n (4,'Graduation
+    Ceremony 2026','Main Quadrangle', now() + interval '60 days', 0.00, 16, 24)\r\nON
+    CONFLICT DO NOTHING;\r\nSELECT setval('events_id_seq', (SELECT max(id) FROM events));\r\n\r\n--
+    Event 3 is nearly sold out: row A is gone except A1, and row B has a\r\n-- scattering
+    of singles left. Asking for three together there is interesting.\r\nINSERT INTO
+    bookings (event_id, seat, holder, price, ref)\r\nSELECT 3, 'A' || n, 'earlybird',
+    787.50, 'SEEDA00001'\r\nFROM generate_series(2, 12) AS n\r\nON CONFLICT DO NOTHING;\r\n\r\nINSERT
+    INTO bookings (event_id, seat, holder, price, ref) VALUES\r\n (3,'B2','meena',787.50,'SEEDB00002'),\r\n
+    (3,'B5','meena',787.50,'SEEDB00002'),\r\n (3,'B9','arjun',787.50,'SEEDB00003'),\r\n
+    (3,'C4','arjun',562.50,'SEEDB00003')\r\nON CONFLICT DO NOTHING;\r\n\r\n-- A handful
+    of sales on the big show so the seat map is not a blank grid.\r\nINSERT INTO bookings
+    (event_id, seat, holder, price, ref) VALUES\r\n (1,'A1','nandini',1400.00,'SEED100001'),\r\n
+    (1,'A2','nandini',1400.00,'SEED100001'),\r\n (1,'D12','sunil',1000.00,'SEED100002'),\r\n
+    (1,'D13','sunil',1000.00,'SEED100002'),\r\n (1,'J7','kiran',800.00,'SEED100003')\r\nON
+    CONFLICT DO NOTHING;\r\nSELECT setval('bookings_id_seq', (SELECT max(id) FROM
+    bookings));\r\n"
+kind: ConfigMap
+metadata:
+  name: event-booking-migrations
+  namespace: prod
