@@ -1,4 +1,3 @@
-
 import os
 import time
 from uuid import uuid4
@@ -22,8 +21,8 @@ app = FastAPI(title="event-ticket-booking")
 # Overridable so expiry can be tested in seconds instead of ten minutes.
 HOLD_SECONDS = int(os.environ.get("HOLD_SECONDS", "600"))
 
-# Check every seat still belongs to this holder, then delete the lot.
-# Redis runs this whole script as one operation.
+# Check every seat still belongs to this holder, then delete the lot, with no
+# window in between. Redis runs this whole script as one operation.
 CONFIRM_LUA = """
 for i, k in ipairs(KEYS) do
   if redis.call('GET', k) ~= ARGV[1] then return 0 end
@@ -92,8 +91,8 @@ def _sold(event_id):
 
 
 def _held(event_id):
-    """Return seats with live hold keys as {seat: holder}."""
-
+    """Seats with a live hold key, as {seat: holder}. Keys that have expired
+    simply are not there - that is the whole point of using a TTL."""
     c = cache.client()
     prefix = f"hold:{event_id}:"
     out = {}
@@ -104,6 +103,21 @@ def _held(event_id):
             out[key[len(prefix):]] = holder
 
     return out
+
+
+def _validate_holder(payload):
+    holder = str(payload.get("holder", "")).strip()
+
+    if not holder:
+        raise HTTPException(400, "holder is required")
+
+    if len(holder) > 100:
+        raise HTTPException(
+            400,
+            "holder must be 100 characters or fewer",
+        )
+
+    return holder
 
 
 @app.get("/events")
@@ -122,7 +136,6 @@ def events():
 def seats(event_id: int):
     event = _event(event_id)
     sold, held = _sold(event_id), _held(event_id)
-
     free = [
         s for s in _all_seats(event)
         if s not in sold and s not in held
@@ -140,19 +153,10 @@ def seats(event_id: int):
 
 @app.post("/events/{event_id}/hold", status_code=201)
 def hold(event_id: int, payload: dict = Body(...)):
-    """Temporarily hold seats using Redis TTLs."""
-
+    """Put seats on a ten-minute clock. The TTL is the clock - nothing in this
+    app has to remember to come back and sweep them up."""
     event = _event(event_id)
-    holder = str(payload.get("holder", "")).strip()
-
-    if not holder:
-        raise HTTPException(400, "holder is required")
-
-    if len(holder) > 100:
-        raise HTTPException(
-            400,
-            "holder must be 100 characters or fewer",
-        )
+    holder = _validate_holder(payload)
 
     wanted = payload.get("seats")
 
@@ -211,7 +215,8 @@ def hold(event_id: int, payload: dict = Body(...)):
         ):
             taken.append(seat)
         else:
-            # Release seats already acquired if any seat is unavailable.
+            # Lost the race on one seat - give back the ones we grabbed so a
+            # failed hold leaves no seat stranded until its TTL runs out.
             if taken:
                 c.delete(
                     *[_hold_key(event_id, s) for s in taken]
@@ -247,31 +252,23 @@ def my_hold(event_id: int, holder: str):
     ]
 
     if not mine:
-        raise HTTPException(
-            404,
-            "no live hold for that holder",
-        )
+        raise HTTPException(404, "no live hold for that holder")
 
     ttls = [c.ttl(_hold_key(event_id, s)) for s in mine]
-    valid_ttls = [t for t in ttls if t is not None]
 
     return {
         "event_id": event_id,
         "holder": holder,
         "seats": sorted(mine),
-        "expires_in": max(0, min(valid_ttls)),
+        "expires_in": max(0, min(t for t in ttls if t is not None)),
     }
 
 
 @app.post("/events/{event_id}/confirm")
 def confirm(event_id: int, payload: dict = Body(...)):
-    """Turn a live hold into a booking, or fail if it expired."""
-
+    """Turn a live hold into a booking, or fail because it expired."""
     event = _event(event_id)
-    holder = str(payload.get("holder", "")).strip()
-
-    if not holder:
-        raise HTTPException(400, "holder is required")
+    holder = _validate_holder(payload)
 
     mine = sorted(
         s for s, h in _held(event_id).items()
@@ -305,8 +302,7 @@ def confirm(event_id: int, payload: dict = Body(...)):
         with db.connect() as conn, conn.cursor() as cur:
             for line in price["lines"]:
                 cur.execute(
-                    "INSERT INTO bookings "
-                    "(event_id, seat, holder, price, ref)"
+                    "INSERT INTO bookings (event_id, seat, holder, price, ref)"
                     " VALUES (%s,%s,%s,%s,%s)",
                     (
                         event_id,
@@ -317,10 +313,9 @@ def confirm(event_id: int, payload: dict = Body(...)):
                     ),
                 )
     except Exception:
-        raise HTTPException(
-            409,
-            "one of those seats was sold first",
-        )
+        # UNIQUE(event_id, seat) is the last word. If we get here the hold was
+        # honoured but the seat was already sold, so nothing is booked.
+        raise HTTPException(409, "one of those seats was sold first")
 
     return {
         "ref": ref,
@@ -359,10 +354,9 @@ def release(event_id: int, holder: str):
 @app.get("/bookings/{ref}")
 def booking(ref: str):
     rows = db.query(
-        "SELECT b.seat, b.price, b.holder, b.created_at, "
-        "e.name, e.starts_at "
-        "FROM bookings b JOIN events e ON e.id=b.event_id "
-        "WHERE b.ref=%s ORDER BY b.seat",
+        "SELECT b.seat, b.price, b.holder, b.created_at, e.name, e.starts_at"
+        " FROM bookings b JOIN events e ON e.id=b.event_id"
+        " WHERE b.ref=%s ORDER BY b.seat",
         (ref,),
     )
 
@@ -375,9 +369,5 @@ def booking(ref: str):
         "starts_at": rows[0]["starts_at"],
         "holder": rows[0]["holder"],
         "seats": [r["seat"] for r in rows],
-        "total": round(
-            sum(float(r["price"]) for r in rows),
-            2,
-        ),
+        "total": round(sum(float(r["price"]) for r in rows), 2),
     }
-
